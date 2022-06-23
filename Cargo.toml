@@ -1,0 +1,24 @@
+[package]
+name = "liblauncher"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+tracing-test = "0.2"
+lazy_static = "1.4.0"
+thiserror = "1.0"
+serde_json = "1.0"
+warp = "0.3"
+diesel = { version = "1.4.8", features = ["sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+tokio-stream = "0.1"
+sha1 = "0.10"
+hex = "0.4"
+async-trait = "0.1"
