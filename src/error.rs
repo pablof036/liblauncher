@@ -1,3 +1,4 @@
+use serde_json::error;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -26,6 +27,17 @@ pub enum ProfileError {
     BadAccessToken
 }
 
+#[derive(Debug)]
+pub enum StartupRequirement {
+    Account, Assets, Client, Libraries, Java
+}
+
+#[derive(Debug, Error)]
+pub enum GameProfileError {
+    #[error("requirement to start game not available")]
+    RequirementFailed(StartupRequirement)
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("error with Mojang authentication")]
@@ -34,10 +46,16 @@ pub enum Error {
     ProfileError(#[from] ProfileError),
     #[error("unknown network error")]
     NetworkError(#[from] reqwest::Error),
+    #[error("could not find needed java version")]
+    JavaVersionNotFoundError,
     #[error("could not connect to embedded database")]
     DatabaseConnectionError(#[from] diesel::ConnectionError),
     #[error("database operation error")]
     DatabaseError(#[from] diesel::result::Error),
     #[error("error in file io")]
-    FileIOError(#[from] std::io::Error)
+    FileIOError(#[from] std::io::Error),
+    #[error("file already exists {0}")]
+    FileExists(String),
+    #[error("error ocurred at game startup or during execution")]
+    GameProfileError(#[from] GameProfileError)
 }

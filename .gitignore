@@ -3,4 +3,6 @@
 /secrets
 /assets
 /libraries
+/natives
+/jdk
 launcher.db
