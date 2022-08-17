@@ -6,17 +6,26 @@ pub use crate::{error::{Error, Result}, store::{models::Account, store_account}}
 
 use self::{microsoft::microsoft_login, profile::get_profile, mojang::mojang_login};
 
-pub async fn new_mojang_login(username: &str, password: &str) -> Result<()> {
+pub async fn new_mojang_login(username: &str, password: &str) -> Result<Account> {
     let access_token = mojang_login(username, password).await?;
     store_new_account(&access_token).await
 }
 
-pub async fn new_microsoft_login(code: &str) -> Result<()> {
+pub async fn new_microsoft_login(code: &str) -> Result<Account> {
     let access_token = microsoft_login(code).await?;
     store_new_account(&access_token).await
 }
 
-async fn store_new_account(access_token: &str) -> Result<()> {
+pub async fn new_offline_login(username: &str) -> Result<Account> {
+    let account = Account {
+        username: username.to_owned(),
+        ..Default::default()
+    };
+    store_account(&account)?;
+    Ok(account)
+}
+
+async fn store_new_account(access_token: &str) -> Result<Account> {
     let profile = get_profile(&access_token).await?;
     let account = Account {
         id: None,
@@ -26,7 +35,11 @@ async fn store_new_account(access_token: &str) -> Result<()> {
         client_id: String::from("liblauncher"), 
     };
     store_account(&account)?;
-    Ok(())
+    Ok(account)
+}
+
+pub async fn get_accounts() -> Result<Vec<Account>> {
+    crate::store::get_accounts()
 }
 
 

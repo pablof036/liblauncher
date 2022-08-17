@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
+use glob::glob;
 use serde::{Deserialize, Serialize};
 
+use crate::path_with_launcher;
 use crate::{client, error::Result};
+use crate::resources::download::DownloadStatus;
 
 use super::download::{self, Downloadeable, DownloadWithSizeCheck, DownloadType};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", untagged)]
 pub enum Argument {
     Simple(String),
@@ -23,28 +26,28 @@ impl Argument {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", untagged)]
-enum DetailedArgumentValue {
+pub enum DetailedArgumentValue {
     Single(String),
     List(Vec<String>)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Versions {
     latest: Latest,
     versions: Vec<Version>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Latest {
     pub release: String,
     pub snapshot: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Version {
     pub id: String,
@@ -61,7 +64,7 @@ impl Version {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionType {
     Release,
@@ -70,35 +73,35 @@ pub enum VersionType {
     OldAlpha,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionDetails {
     pub arguments: Arguments,
-    pub asset_index: AssetIndex,
+    asset_index: AssetIndex,
     pub assets: String,
-    pub downloads: Downloads,
+    downloads: Downloads,
     pub java_version: JavaVersion,
     pub libraries: Vec<Library>,
-    pub main_class: String,
-    pub minimum_launcher_version: i32,
-    pub release_time: chrono::DateTime<chrono::Utc>,
-    pub time: chrono::DateTime<chrono::Utc>,
+    main_class: String,
+    minimum_launcher_version: i32,
+    release_time: chrono::DateTime<chrono::Utc>,
+    time: chrono::DateTime<chrono::Utc>,
     #[serde(rename = "type")]
     pub version_type: VersionType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Arguments {
     pub game: Vec<Argument>,
     pub jvm: Vec<Argument>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformArgument {
-    rules: Vec<PlatformRule>,
-    value: DetailedArgumentValue
+    pub rules: Vec<PlatformRule>,
+    pub value: DetailedArgumentValue
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,14 +119,14 @@ pub struct PlatformRuleOS {
     pub arch: Option<String>
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
     pub hash: String,
     pub size: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
     id: String,
@@ -133,7 +136,7 @@ pub struct AssetIndex {
     url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Downloads {
     client: Download,
@@ -142,7 +145,7 @@ pub struct Downloads {
     server_mappings: Option<Download>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Download {
     sha1: String,
@@ -150,11 +153,11 @@ pub struct Download {
     url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaVersion {
-    component: String,
-    major_version: i32,
+    pub component: String,
+    pub major_version: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,16 +237,79 @@ impl Versions {
 
 impl VersionDetails {
     fn index_path(&self) -> String {
-        format!("./assets/indexes/{}.json", self.assets)
+        path_with_launcher("assets/indexes/") + &self.assets + ".json"
     }
 
-    pub async fn get_assets(&self) -> Result<Vec<(String, Asset)>> {
+    pub async fn download_client(&self) -> Result<()>
+    {
+        self.client_download_info().download().await?;
+        Ok(())
+    }
+
+    pub async fn download_jdk(&self) -> Result<()> {
+        super::jdk::JavaVersion::search(self.java_version.major_version)
+            .await?
+            .download_info()
+            .download()
+            .await?;
+        Ok(())
+    }
+
+    pub async fn download_assets<F>(&self, f: F) -> Result<()>
+        where F: FnOnce(&download::Download, &Result<DownloadStatus>) + Clone {
+        let assets = self.assets().await?;
+        download::download_collection(&assets, |d, r| {
+            download::log_download(d, r);
+           f(d, r)
+        }).await;
+        Ok(())
+    }
+
+    pub async fn download_libraries<F>(&self, f: F) -> Result<()>
+        where F: FnOnce(&download::Download, &Result<DownloadStatus>) + Clone  {
+        download::download_collection(&self.libraries, |d, r| {
+            download::log_download(d, r);
+            f(d, r)
+        }).await;
+        Ok(())
+    }
+
+    pub fn check_jdk(&self) -> bool {
+        glob(&(path_with_launcher("jdk/") + "*" + &self.java_version.major_version.to_string() +  "*/bin/java")).unwrap().count() != 0
+    }
+
+    pub async fn check_assets(&self) -> bool {
+        super::download::is_downloaded(&self.assets().await.unwrap())
+    }
+
+    pub async fn check_libraries(&self) -> bool {
+        super::download::is_downloaded(&self.libraries)
+    }
+
+    pub async fn check_client(&self) -> bool {
+        self.client_download_info().size_check().unwrap().check_size()
+    }
+
+    pub fn extract_natives(&self) -> Result<()> {
+        super::natives::extract_natives(&self.libraries)
+    }
+
+    async fn assets(&self) -> Result<Vec<(String, Asset)>> {
+        return if let Ok(assets) = self.load_asset_index().await {
+            Ok(assets)
+        } else {
+            self.store_asset_index().await?;
+            self.load_asset_index().await
+        }
+    }
+
+    async fn load_asset_index(&self) -> Result<Vec<(String, Asset)>> {
         let index = tokio::fs::read_to_string(self.index_path()).await?;
         let assets = serde_json::from_str::<HashMap<String, HashMap<String, Asset>>>(&index).unwrap().remove("objects").unwrap();
         Ok(assets.into_iter().collect())
     }
 
-    pub async fn store_asset_index(&self) -> Result<()> {
+    async fn store_asset_index(&self) -> Result<()> {
         let response = client
             .get(&self.asset_index.url)
             .send()
@@ -252,16 +318,16 @@ impl VersionDetails {
             .await?;
         
         
-        tokio::fs::create_dir_all("./assets/indexes").await?;
+        tokio::fs::create_dir_all(path_with_launcher("assets/indexes")).await?;
         tokio::fs::write(self.index_path(), response).await?;
         Ok(())
     }
 
-    pub fn client_download_info(&self) -> DownloadType {
+    fn client_download_info(&self) -> DownloadType {
         DownloadType::SizeCheck(
             DownloadWithSizeCheck {
                     download: download::Download {
-                        path: format!("client/{}/client.jar", self.assets),
+                        path: path_with_launcher("client/") + &self.assets + "/client.jar",
                         url: self.downloads.client.url.clone()
                     },
                     size: self.downloads.client.size as usize
@@ -274,7 +340,7 @@ impl Downloadeable for (String, Asset) {
     fn download_info(&self) -> DownloadType {
         DownloadType::SizeCheck(DownloadWithSizeCheck {
             download: download::Download {
-                path: format!("./assets/objects/{}/{}", &self.1.hash[..2], &self.1.hash),
+                path:  path_with_launcher("assets/objects/") + &self.1.hash[..2] + "/" + &self.1.hash,
                 url: format!("http://resources.download.minecraft.net/{}/{}", &self.1.hash[..2], &self.1.hash)
             },
             size: self.1.size as usize
@@ -287,7 +353,7 @@ impl Downloadeable for Library {
     fn download_info(&self) -> DownloadType {
         DownloadType::SizeCheck(DownloadWithSizeCheck {
             download: download::Download {
-                path: format!("./libraries/{}", self.downloads.artifact.path),
+                path: path_with_launcher("libraries/") +  &self.downloads.artifact.path,
                 url: self.downloads.artifact.url.clone()
             },
             size: self.downloads.artifact.size as usize
@@ -300,6 +366,7 @@ mod tests {
     use super::VersionType;
     use tracing::info;
     use tracing_test::traced_test;
+    use crate::resources::download;
 
     use super::get_available_versions;
 
@@ -349,11 +416,10 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn get_assets_downloads_for_latest_version() {
+    async fn download_assets() {
         let versions = get_available_versions().await.unwrap();
         let latest = versions.latest_release();
         let details = latest.get_details().await.unwrap();
-        let assets = details.get_assets().await.unwrap();
-        info!("{:#?}", assets);
+        details.download_assets(|_, _| {}).await.unwrap();
     }
 }

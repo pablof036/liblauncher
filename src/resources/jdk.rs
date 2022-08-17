@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 
-use crate::{error::{Result, Error}, client};
+use crate::{error::{Result, Error}, client, path_with_launcher};
 
 use super::download::{Downloadeable, DownloadType, DownloadArchive, Download};
 
@@ -96,10 +96,10 @@ impl Downloadeable for JavaVersion {
         DownloadType::Archive(
             DownloadArchive {
                 download: Download {
-                    path: format!("jdk/{}", self.filename),
+                    path: path_with_launcher("jdk/") + &self.filename,
                     url: self.download_url.clone()
                 },
-                destination: format!("jdk/{}", self.major_version)
+                destination: path_with_launcher("jdk")
             }
         )
     }
@@ -116,7 +116,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn get_eleven() {
-        let version = JavaVersion::search(8).await.unwrap();
+        let version = JavaVersion::search(17).await.unwrap();
         info!("{:#?}", version);
         version.download_info().download().await.unwrap();
     }

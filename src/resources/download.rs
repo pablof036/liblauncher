@@ -1,3 +1,5 @@
+//TODO: Fix, no like
+
 use crate::error::Error;
 use crate::{client, error::Result};
 
@@ -8,15 +10,10 @@ use tar::Archive;
 use std::{fs, path::Path};
 use tokio::time::Instant;
 use tokio::{fs::File, io::AsyncWriteExt};
+use tracing::{error, info};
 
 pub trait Downloadeable {
     fn download_info(&self) -> DownloadType;
-}
-
-#[async_trait]
-pub trait DownloadeableCollection {
-    async fn download<F>(&self, f: F)
-    where F: FnOnce(&Download, &Result<DownloadStatus>) + Send + Sync + Clone + 'static;
 }
 
 pub enum DownloadType {
@@ -68,6 +65,39 @@ pub struct DownloadWithSizeCheck {
 pub struct DownloadArchive {
     pub download: Download,
     pub destination: String,
+}
+
+pub fn is_downloaded(items: &[impl Downloadeable]) -> bool {
+    for item in items.iter() {
+        if !item.download_info().size_check().unwrap().check_size() {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+pub fn log_download(item: &Download, result: &Result<DownloadStatus>) {
+    match result {
+        Ok(_) => info!("download success: {}", item.path),
+        Err(e) => error!("download {} failed: {}", item.path, e),
+    }
+}
+
+pub async fn download_collection<F>(collection: &[impl Downloadeable], f: F)
+    where F: FnOnce(&Download, &Result<DownloadStatus>) + Clone {
+    let tasks = tokio_stream::iter(collection)
+        .map(|item| {
+            let f = f.to_owned();
+            let item = item.to_owned();
+            async move {
+                let download = item.download_info();
+                let status = download.download().await;
+                f(download.inner(), &status);
+            }
+        }).buffer_unordered(5);
+
+    tasks.collect::<Vec<_>>().await;
 }
 
 impl Download {
@@ -134,46 +164,16 @@ impl DownloadArchive {
     }
 }
 
-#[async_trait]
-impl<T: Downloadeable + Send + Sync + Clone + 'static> DownloadeableCollection for [T] {
-    async fn download<F>(&self, f: F)
-    where F: FnOnce(&Download, &Result<DownloadStatus>) + Send + Sync + Clone + 'static {
-        for item in self.iter() {
-            let download = item.download_info();
-            let result = download.download().await;
-            f.clone()(download.inner(), &result);
 
-        }
-        /* 
-        let tasks = self.into_iter()
-            .map(move |item| {
-                let f = f.clone();
-                let item = item.clone();
-                async move {
-                    let download = item.download();
-                    let status = download.download().await;
-                    f.clone()(download.inner(), &status);
-                }
-            }).collect::<FuturesOrdered<_>>();
-
-        tasks.collect::<Vec<_>>().await;
-        */
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use crate::{resources::version::get_available_versions, error};
-    use super::{DownloadeableCollection, Download, DownloadStatus};
+    use super::{Download, DownloadStatus};
     use tracing::{info, error};
     use tracing_test::traced_test;
 
-    fn log_download(item: &Download, result: &error::Result<DownloadStatus>) {
-        match result {
-            Ok(_) => info!("download success: {}", item.path),
-            Err(e) => error!("download {} failed: {}", item.path, e),
-        }
-    }
+
 
     #[tokio::test]
     #[traced_test]
@@ -181,9 +181,6 @@ mod tests {
         let versions = get_available_versions().await.unwrap();
         let latest = versions.latest_release();
         let details = latest.get_details().await.unwrap();
-        details.store_asset_index().await.unwrap();
-        let assets = details.get_assets().await.unwrap();
-        assets.download(log_download).await;
     }
 
     #[tokio::test]
@@ -194,6 +191,6 @@ mod tests {
         let details = latest.get_details().await.unwrap();
 
         
-        details.libraries.download(log_download).await;
+        super::download_collection(&details.libraries, |_, _| {}).await;
     }
 }

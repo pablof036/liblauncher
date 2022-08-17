@@ -115,7 +115,7 @@ struct MojangResponse {
     access_token: String,
 }
 
-pub async fn get_microsoft_auth_uri() -> String {
+pub fn get_microsoft_auth_uri() -> String {
     format!(
         "https://login.live.com/oauth20_authorize.srf?client_id={}&response_type=code&redirect_uri=http://localhost:7575&scope=XboxLive.signin%20offline_access",
         include_str!("../../../secrets/client_id")

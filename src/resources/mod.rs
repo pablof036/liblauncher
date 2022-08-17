@@ -1,6 +1,6 @@
 pub mod version;
-pub mod download;
-pub mod natives;
+mod download;
+mod natives;
 mod jdk;
 
 

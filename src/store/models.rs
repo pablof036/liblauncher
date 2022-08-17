@@ -2,7 +2,7 @@ use diesel::{Queryable, Insertable};
 
 use crate::schema::accounts;
 
-#[derive(Queryable, Insertable)]
+#[derive(Default, Queryable, Insertable)]
 pub struct Account {
     pub id: Option<i32>,
     pub client_id: String,
